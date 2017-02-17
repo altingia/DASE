@@ -51,6 +51,43 @@ def filterASs (distances, max_rank, min_transcripts = 3):
     
     return ordered_list[:max_rank + 1]
 
+def calcNu (data, kernel = 'rbf'):
+    from anomalyDetection import distanceFromEven, oneClassSVM  # @UnresolvedImport
+    from sys import maxsize
+    
+    nu_score = {}
+    nus = [1e-3 * (i + 1) for i in range(9)]
+    nus.extend([1e-2 * (i + 1) for i in range(50)])
+    
+    for nu in nus:
+        prediction, labels, _ = oneClassSVM(data, nu = nu, kernel = 'rbf')
+        upper_bound = -maxsize + 1
+        for i in range(len(labels)):
+            if prediction[i] > 0:
+                parts = labels[i].split('_')
+                transcript = '_'.join(parts[:-1])
+                variant = parts[-1]
+                
+                this_data = data[transcript][variant]
+                distance = distanceFromEven(this_data)
+                if upper_bound < distance:
+                    upper_bound = distance
+
+        for i in range(len(labels)):
+            if prediction[i] < 0:
+                parts = labels[i].split('_')
+                transcript = '_'.join(parts[:-1])
+                variant = parts[-1]
+                
+                this_data = data[transcript][variant]
+                distance = distanceFromEven(this_data)
+                if distance > upper_bound:
+                    nu_score.setdefault(labels[i], nu)
+                    if nu_score[labels[i]] > nu:
+                        nu_score[labels[i]] = nu
+    
+    return nu_score
+
 if __name__ == '__main__':
     from parseFiles import parseFiles  # @UnresolvedImport
     from calculation import calcCoverages, calcAngles  # @UnresolvedImport
@@ -75,6 +112,7 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--output', type = str, dest = 'output_file', help = 'output file. (default: distance_list_{min_contigs}.dat)')
     parser.add_argument('-nc', '--number_of_contigs', type = int, dest = 'min_contigs', help = 'min. contigs in one transcript considered. (default: 3)')
     parser.add_argument('-gap', '--gap_penalty', type = float, dest = 'gap_penalty', help = 'gap penalty for MAFFT. (default: 10.0)')
+    parser.add_argument('-ker', '--kernel', type = float, dest = 'kernel', help = 'kernel for One-class SVM. (default: rbf)')
     args = parser.parse_args()
     
     seqfile = args.seq
@@ -106,6 +144,10 @@ if __name__ == '__main__':
     threshold = 2
     if args.expression_threshold:
         threshold = args.threshold
+        
+    kernel = 'rbf'
+    if args.kernel:
+        kernel = args.kernel
     
 
     divideSequences(seqfile, seqdir = directory)
@@ -115,6 +157,9 @@ if __name__ == '__main__':
         
     log_ex, sequences = parseFiles(expressionfiles, file_format = 'kallisto', threshold = threshold, seq_dir = directory + 'aligned_contigs')
     print("Loaded the expression files.")
+    
+    nu_score = calcNu(log_ex, kernel = kernel)
+    print("Calculated nu scores.")
 
     coverages = calcCoverages(sequences)
     angles = calcAngles(log_ex, coverages)
@@ -126,7 +171,10 @@ if __name__ == '__main__':
     print("Ranked contigs according to the above distances.")
     writefile = open(resultfile, 'w')
     for pair in ordered_list:
-        writefile.write('{0:s}\t{1:.4f}\n'.format(pair[0], pair[1]))
+        if pair[0] in nu_score.keys():
+            writefile.write('{0:s}\t{1:.4f}\t{2:.3f}\n'.format(pair[0], pair[1], nu_score[pair[0]]))
+        else:
+            writefile.write('{0:s}\t{1:.4f}\t>0.500\n'.format(pair[0], pair[1]))            
     writefile.close()
     
     print('All tasks finished.')
