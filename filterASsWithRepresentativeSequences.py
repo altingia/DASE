@@ -51,48 +51,12 @@ def filterASs (distances, max_rank, min_transcripts = 3):
     
     return ordered_list[:max_rank + 1]
 
-def calcNu (data, kernel = 'rbf'):
-    from anomalyDetection import distanceFromEven, oneClassSVM  # @UnresolvedImport
-    from sys import maxsize
-    
-    nu_score = {}
-    nus = [1e-3 * (i + 1) for i in range(9)]
-    nus.extend([1e-2 * (i + 1) for i in range(50)])
-    
-    for nu in nus:
-        prediction, labels, _ = oneClassSVM(data, nu = nu, kernel = 'rbf')
-        upper_bound = -maxsize + 1
-        for i in range(len(labels)):
-            if prediction[i] > 0:
-                parts = labels[i].split('_')
-                transcript = '_'.join(parts[:-1])
-                variant = parts[-1]
-                
-                this_data = data[transcript][variant]
-                distance = distanceFromEven(this_data)
-                if upper_bound < distance:
-                    upper_bound = distance
-
-        for i in range(len(labels)):
-            if prediction[i] < 0:
-                parts = labels[i].split('_')
-                transcript = '_'.join(parts[:-1])
-                variant = parts[-1]
-                
-                this_data = data[transcript][variant]
-                distance = distanceFromEven(this_data)
-                if distance > upper_bound:
-                    nu_score.setdefault(labels[i], nu)
-                    if nu_score[labels[i]] > nu:
-                        nu_score[labels[i]] = nu
-    
-    return nu_score
-
 if __name__ == '__main__':
     from parseFiles import parseFiles  # @UnresolvedImport
     from calculation import calcCoverages, calcAngles  # @UnresolvedImport
     from divideSequences import divideSequences  # @UnresolvedImport
     from executeMafft import executeMafft  # @UnresolvedImport
+    from selectRepresentativeSequences import summarizeRepresentative  # @UnresolvedImport
     import argparse, os, sys
     
     species = 'human_liver_brain'
@@ -109,10 +73,10 @@ if __name__ == '__main__':
     parser.add_argument('-seq', '--sequence-file', type = str, dest = 'seq', help = 'sequence file (FASTA format is necessary)', required = True)
     parser.add_argument('-ef', '--expression_file_format', type = str, dest = 'file_format', help = 'expression file format. (default: kallisto)')
     parser.add_argument('-th', '--expression_threshold', type = float, dest = 'expression_threshold', help = 'threshold of logarithm of the expression. (default: 2)')
+    parser.add_argument('-rep', '--representative_sequences', type = str, dest = 'representative_file', help = 'fasta-format output file for the representative sequence of each transcripts. (default: representative_sequences.fasta)')
     parser.add_argument('-o', '--output', type = str, dest = 'output_file', help = 'output file. (default: distance_list_{min_contigs}.dat)')
     parser.add_argument('-nc', '--number_of_contigs', type = int, dest = 'min_contigs', help = 'min. contigs in one transcript considered. (default: 3)')
     parser.add_argument('-gap', '--gap_penalty', type = float, dest = 'gap_penalty', help = 'gap penalty for MAFFT. (default: 10.0)')
-    parser.add_argument('-ker', '--kernel', type = float, dest = 'kernel', help = 'kernel for One-class SVM. (default: rbf)')
     args = parser.parse_args()
     
     seqfile = args.seq
@@ -128,6 +92,10 @@ if __name__ == '__main__':
     min_transcripts = 3
     if args.min_contigs:
         min_transcripts = args.min_contigs
+        
+    representative_file = directory + 'representative_sequences.fasta'
+    if args.representative_file:
+        representative_file = args.representative_file
     
     resultfile = directory + 'distance_list_' + str(min_transcripts) + '.dat'
     if args.output_file:
@@ -144,22 +112,23 @@ if __name__ == '__main__':
     threshold = 2
     if args.expression_threshold:
         threshold = args.threshold
-        
-    kernel = 'rbf'
-    if args.kernel:
-        kernel = args.kernel
     
 
     divideSequences(seqfile, seqdir = directory)
     print("Loaded the sequence file {0:s}.".format(seqfile))
     executeMafft(args.mafft, directory = directory, gap_penalty = gap_penalty)
     print("Executed MAFFT for each transcript containing more than 1 contigs.")
+    representatives = summarizeRepresentative(directory + 'aligned_contigs/')
+    rep_file = open(representative_file, 'w')
+    for transcript in sorted(representatives.keys()):
+        isoform = list(representatives[transcript].keys())[0]
+        rep_file.write('>' + transcript + '_' + isoform + '\n')
+        rep_file.write(representatives[transcript][isoform] + '\n')
+    rep_file.close()
+    print("Selected representative sequences.")
         
     log_ex, sequences = parseFiles(expressionfiles, file_format = 'kallisto', threshold = threshold, seq_dir = directory + 'aligned_contigs')
     print("Loaded the expression files.")
-    
-    nu_score = calcNu(log_ex, kernel = kernel)
-    print("Calculated nu scores.")
 
     coverages = calcCoverages(sequences)
     angles = calcAngles(log_ex, coverages)
@@ -171,10 +140,7 @@ if __name__ == '__main__':
     print("Ranked contigs according to the above distances.")
     writefile = open(resultfile, 'w')
     for pair in ordered_list:
-        if pair[0] in nu_score.keys():
-            writefile.write('{0:s}\t{1:.4f}\t{2:.3f}\n'.format(pair[0], pair[1], nu_score[pair[0]]))
-        else:
-            writefile.write('{0:s}\t{1:.4f}\t>0.500\n'.format(pair[0], pair[1]))            
+        writefile.write('{0:s}\t{1:.4f}\n'.format(pair[0], pair[1]))
     writefile.close()
     
     print('All tasks finished.')
