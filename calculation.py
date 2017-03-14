@@ -17,7 +17,6 @@ def calcInnerProduct (p1, p2):
 
 def calcAngles (expressions, coverages):
     from math import acos, pi
-    import sys
     angles = {}
     
     for transcript in expressions.keys():
@@ -39,7 +38,7 @@ def calcAngles (expressions, coverages):
                     
     return angles
 
-def calcCoverages (sequences):
+def calcCoverages (sequences, coverage_threshold):
     coverages = {}
     for transcript in sequences.keys():
         contig_list = list(sequences[transcript].keys())
@@ -57,11 +56,12 @@ def calcCoverages (sequences):
                             total_length += 1
                             if seq1[k] == seq2[k]:
                                 same_site += 1
-                                
-                    coverages[transcript].setdefault(contig_list[i], {})
-                    coverages[transcript][contig_list[i]][contig_list[j]] = float(same_site) / total_length
-                    coverages[transcript].setdefault(contig_list[j], {})
-                    coverages[transcript][contig_list[j]][contig_list[i]] = float(same_site) / total_length
+                    
+                    if float(same_site) / total_length >= coverage_threshold:            
+                        coverages[transcript].setdefault(contig_list[i], {})
+                        coverages[transcript][contig_list[i]][contig_list[j]] = float(same_site) / total_length
+                        coverages[transcript].setdefault(contig_list[j], {})
+                        coverages[transcript][contig_list[j]][contig_list[i]] = float(same_site) / total_length
     return coverages
 
 if __name__ == '__main__':

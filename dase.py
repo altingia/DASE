@@ -14,12 +14,13 @@ def calcDistances (coverages, angles):
         
         for i in range(len(contigs) - 1):
             for j in range(i + 1, len(contigs)):
-                distance = 1 - (coverages[transcript][contigs[i]][contigs[j]] + cos(radians(angles[transcript][contigs[i]][contigs[j]]))) / 2
-                distances.setdefault(transcript, {})
-                distances[transcript].setdefault(contigs[i], {})
-                distances[transcript][contigs[i]][contigs[j]] = distance
-                distances[transcript].setdefault(contigs[j], {})
-                distances[transcript][contigs[j]][contigs[i]] = distance
+                if contigs[i] in coverages[transcript].keys() and contigs[j] in coverages[transcript][contigs[i]].keys():
+                    distance = 1 - (coverages[transcript][contigs[i]][contigs[j]] + cos(radians(angles[transcript][contigs[i]][contigs[j]]))) / 2
+                    distances.setdefault(transcript, {})
+                    distances[transcript].setdefault(contigs[i], {})
+                    distances[transcript][contigs[i]][contigs[j]] = distance
+                    distances[transcript].setdefault(contigs[j], {})
+                    distances[transcript][contigs[j]][contigs[i]] = distance
     
     return distances
 
@@ -34,13 +35,15 @@ def rankASs (distances, min_transcripts = 3):
         if len(contigs) >= min_transcripts:        
             for i in range(len(contigs)):
                 sum_dist = 0
+                target_num = 0
                 
                 for j in range(len(contigs)):
-                    if i != j:
+                    if i != j and contigs[j] in distances[transcript][contigs[i]].keys():
                         sum_dist += distances[transcript][contigs[i]][contigs[j]]
+                        target_num += 1
                 
                 contig_list.append(transcript + '_' + contigs[i])
-                distance_list.append(sum_dist / (len(contigs) - 1))
+                distance_list.append(sum_dist / target_num)
     
     heap_distances, heap_contigs  = heap(distance_list, contig_list)
         
@@ -57,6 +60,7 @@ if __name__ == '__main__':
     from divideSequences import divideSequences  # @UnresolvedImport
     from executeMafft import executeMafft  # @UnresolvedImport
     from selectRepresentativeSequences import summarizeRepresentative  # @UnresolvedImport
+    from determineBirths import determineBirth # @UnresolvedImport
     import argparse, os, sys
     
     species = 'human_liver_brain'
@@ -70,9 +74,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(usage = usage)
     parser.add_argument('-ex', '--expression_files', type = str, dest = 'ex', help = 'expression files, comma separated', required = True)
     parser.add_argument('-mafft', '--mafft-dir', type = str, dest = 'mafft', help = 'where the executable MAFFT is', required = True)
+    parser.add_argument('-trdir', '--trinity-dir', type = str, dest = 'trinity_dir', help = 'directory of the Trinity result', required = True)
     parser.add_argument('-seq', '--sequence-file', type = str, dest = 'seq', help = 'sequence file (FASTA format is necessary)', required = True)
     parser.add_argument('-ef', '--expression_file_format', type = str, dest = 'file_format', help = 'expression file format. (default: kallisto)')
     parser.add_argument('-th', '--expression_threshold', type = float, dest = 'expression_threshold', help = 'threshold of logarithm of the expression. (default: 2)')
+    parser.add_argument('-cov', '--coverage_threshold', type = float, dest = 'coverage_threshold', help = 'threshold of the coverage. (dafault: 0.25)')
     parser.add_argument('-rep', '--representative_sequences', type = str, dest = 'representative_file', help = 'fasta-format output file for the representative sequence of each transcripts. (default: representative_sequences.fasta)')
     parser.add_argument('-o', '--output', type = str, dest = 'output_file', help = 'output file. (default: distance_list_{min_contigs}.dat)')
     parser.add_argument('-nc', '--number_of_contigs', type = int, dest = 'min_contigs', help = 'min. contigs in one transcript considered. (default: 3)')
@@ -80,6 +86,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     seqfile = args.seq
+    
+    trinity_dir = args.trinity_dir
+    if trinity_dir[-1] != '/':
+        trinity_dir += '/'
     
     expressionfiles = args.ex.split(',')
     if len(expressionfiles) < 2:
@@ -93,11 +103,15 @@ if __name__ == '__main__':
     if args.min_contigs:
         min_transcripts = args.min_contigs
         
+    coverage_threshold = 0.25
+    if args.coverage_threshold:
+        coverage_threshold = args.coverage_threshold
+
     representative_file = directory + 'representative_sequences.fasta'
     if args.representative_file:
         representative_file = args.representative_file
     
-    resultfile = directory + 'distance_list_' + str(min_transcripts) + '.dat'
+    resultfile = directory + 'transcript_list_' + str(min_transcripts) + '_with_coverage_' + str(coverage_threshold) + '.dat'
     if args.output_file:
         resultfile = directory + args.output_file
     
@@ -112,7 +126,6 @@ if __name__ == '__main__':
     threshold = 2
     if args.expression_threshold:
         threshold = args.threshold
-    
 
     divideSequences(seqfile, seqdir = directory)
     print("Loaded the sequence file {0:s}.".format(seqfile))
@@ -130,7 +143,7 @@ if __name__ == '__main__':
     log_ex, sequences = parseFiles(expressionfiles, file_format = 'kallisto', threshold = threshold, seq_dir = directory + 'aligned_contigs')
     print("Loaded the expression files.")
 
-    coverages = calcCoverages(sequences)
+    coverages = calcCoverages(sequences, coverage_threshold)
     angles = calcAngles(log_ex, coverages)
     
     distances = calcDistances(coverages, angles)
@@ -138,9 +151,19 @@ if __name__ == '__main__':
     
     ordered_list = filterASs(distances, len(distances) - 1, min_transcripts)
     print("Ranked contigs according to the above distances.")
+    
+    trinity_ids = ['' for _ in range(len(ordered_list))]
+    for i in range(len(ordered_list)):
+        trinity_ids[i] = ordered_list[i][0]
+    read_counts = determineBirth(trinity_ids, trinity_dir)
+    print("Summarized the evidence reads for each contig.")
+    
     writefile = open(resultfile, 'w')
     for pair in ordered_list:
-        writefile.write('{0:s}\t{1:.4f}\n'.format(pair[0], pair[1]))
+        writefile.write('{0:s}\t{1:.4f}'.format(pair[0], pair[1]))
+        for sample in read_counts[pair[0]].keys():
+            writefile.write('\t' + sample + '\t' + str(read_counts[pair[0]][sample]))
+        writefile.write('\n')
     writefile.close()
     
     print('All tasks finished.')
