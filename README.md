@@ -15,11 +15,10 @@ DASE does not require reference genome. Instead, DASE requires the output sequen
 Python (>= 2.7)
 MAFFT
 NumPy
-Scikit-learn
 
 ## Usage
 
-    python dase.py -ex ex1.dat,ex2.dat -mafft /path/to/mafft -seq sequences.fasta -ef expression_format -th threshold_of_log(expression) -o output_file.dat -nc min_contigs -gap gap_penalty
+    python dase.py -ex ex1.dat,ex2.dat -mafft /path/to/mafft -seq sequences.fasta -trdir /path/to/Trinity_result_directory -ef expression_format -th threshold_of_log(expression) -o output_file.dat -nc min_contigs -gap gap_penalty
 
 ## Author
 
